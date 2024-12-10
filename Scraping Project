@@ -1,0 +1,156 @@
+import requests  # For making HTTP requests
+from bs4 import BeautifulSoup  # For parsing HTML content
+import random  # For randomizing user agents
+import time  # For adding delays to avoid getting blocked
+
+# User-Agent list to mimic browser requests and avoid detection by the server
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 11; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36",
+]
+
+# Base URL for the auction site
+BASE_URL = "https://www.rbauction.com"
+
+# Function to scrape a single page
+def scrape_page(url):
+    """
+    Scrapes a single page for product details.
+
+    Args:
+        url (str): URL of the page to scrape.
+
+    Returns:
+        list: A list of dictionaries containing product details.
+    """
+    # Set headers with a random user agent to mimic real browser requests
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()  # Raise an error for unsuccessful requests
+
+    # Parse the HTML content of the page
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Find all product containers using their specific class
+    product_containers = soup.find_all("li", class_="MuiListItem-root")
+
+    products = []  # List to store product details
+    for container in product_containers:
+        try:
+            # Extract the product link
+            link_tag = container.find("a")
+            product_link = f"{BASE_URL}{link_tag.get('href')}" if link_tag else "N/A"
+
+            # Extract the image URL
+            img_tag = container.find("img")
+            image_url = img_tag.get("src") if img_tag else "N/A"
+
+            # Extract the product title
+            title = img_tag.get("alt") if img_tag else "N/A"
+
+            # Extract additional details (location, usage, description)
+            text_list = container.find(class_="MuiCardContent-root").find_all("p")
+            text_data = [text.get_text(strip=True) for text in text_list] if text_list else ["N/A"] * 5
+
+            # Assign specific details with fallback values
+            location = text_data[1] if len(text_data) > 1 else "N/A"
+            usage = text_data[3] if len(text_data) > 3 else "N/A"
+            description = text_data[4] if len(text_data) > 4 else "N/A"
+
+            # Compile product details into a dictionary
+            product = {
+                "title": title,
+                "link": product_link,
+                "image_url": image_url,
+                "location": location,
+                "usage": usage,
+                "description": description,
+            }
+            products.append(product)  # Add the product to the list
+        except Exception as e:
+            # Print an error message if parsing fails for a container
+            print(f"Error parsing product: {e}")
+
+    return products  # Return the list of products
+
+# Function to get the next page URL
+def get_next_page_url_static(soup):
+    """
+    Extracts the URL for the next page from the pagination section.
+
+    Args:
+        soup (BeautifulSoup): Parsed HTML content.
+
+    Returns:
+        str or None: URL of the next page or None if no next page exists.
+    """
+    # Find the pagination container
+    pagination_ul = soup.find("ul", class_="MuiPagination-ul")
+    if not pagination_ul:
+        return None  # Return None if the pagination container is not found
+
+    # Find the last <li> (which contains the "Next" button)
+    next_button = pagination_ul.find_all("li")[-1]
+    if next_button:
+        link_tag = next_button.find("a")
+        if link_tag and "href" in link_tag.attrs:
+            return f"https://www.rbauction.com/cp/boom-truck?page={link_tag['href']}"  # Construct the next page URL
+    return None  # Return None if no "Next" button is found
+
+# Function to scrape all pages starting from a given URL
+def scrape_all_pages(start_url):
+    """
+    Scrapes all pages of the website, starting from the given URL.
+
+    Args:
+        start_url (str): URL of the first page to start scraping.
+
+    Returns:
+        list: A list of dictionaries containing product details from all pages.
+    """
+    current_url = start_url  # Initialize the current URL with the start URL
+    all_products = []  # List to store all product details
+
+    while current_url:
+        print(f"Scraping: {current_url}")  # Print the current URL being scraped
+
+        # Set headers with a random user agent
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        response = requests.get(current_url, headers=headers)
+        response.raise_for_status()  # Raise an error for unsuccessful requests
+
+        # Parse the HTML content of the current page
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Scrape products from the current page
+        products = scrape_page(current_url)
+        all_products.extend(products)  # Append the products to the main list
+
+        # Get the URL for the next page
+        current_url = get_next_page_url_static(soup)
+        time.sleep(random.uniform(1, 3))  # Add a random delay to avoid detection
+
+    return all_products  # Return the list of all products
+
+if __name__ == "__main__":
+    # Starting URL for scraping
+    start_url = f"{BASE_URL}/cp/boom-truck"
+
+    # Scrape all pages and get product data
+    product_data = scrape_all_pages(start_url)
+
+    # Remove duplicate entries
+    product_data = [dict(t) for t in {tuple(d.items()) for d in product_data}]
+
+    # Print each product's details
+    for product in product_data:
+        print(product)
+
+    print("Number of products: ", len(product_data))  # Print the total number of products
+
+    # Save the data to a JSON file
+    import json
+    with open("products.json", "w") as f:
+        json.dump(product_data, f, indent=4)
